@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "pyaida"
+version = "0.1.0"
+description = "An AI Data Architecture library"
+authors = ["mr-saoirse <amartey@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+psycopg2-binary = "^2.9.10"
+beautifulsoup4 = "^4.12.3"
+pillow = "^11.0.0"
+loguru = "^0.7.2"
+pydantic = "^2.10.2"
+openai = "^1.55.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
