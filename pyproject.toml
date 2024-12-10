@@ -14,6 +14,8 @@ pillow = "^11.0.0"
 loguru = "^0.7.2"
 pydantic = "^2.10.2"
 openai = "^1.55.3"
+docstring-parser = "^0.16"
+anthropic = "^0.40.0"
 
 
 [build-system]
