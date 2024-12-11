@@ -4,6 +4,7 @@ import docstring_parser
 import inspect
 from pydantic._internal._model_construction import ModelMetaclass
 from pyaida.core.utils import inspection
+import uuid
 
 DEFAULT_NAMESPACE = 'public'
 
@@ -29,11 +30,17 @@ def create_config(name:str, namespace:str, description:str, functions: typing.Op
     return Config
 
 
-class AbstractModel:
+class AbstractModel(BaseModel):
     """sys prompt"""
     
     """optional config - especially for run times"""
-    
+    def ensure_model_not_instance(cls_or_instance: typing.Any):
+        if not isinstance(cls_or_instance, ModelMetaclass) and isinstance(cls_or_instance,AbstractModel):
+            """because of its its convenient to use an instance to construct stores and we help the user"""
+            return cls_or_instance.__class__
+        return cls_or_instance
+            
+            
     @classmethod
     def create_model_from_function(cls, fn: typing.Callable, name_prefix: str=None)->"AbstractModel":
         """
@@ -105,7 +112,13 @@ class AbstractModel:
     def _try_config_attr(cls, name, default=None):
         if hasattr(cls, 'Config'):
             return getattr(cls.Config, name, default)
+        return default
         
+    @classmethod
+    def __get_object_id__(cls):
+        """fully qualified name"""
+        return f"{cls._get_namespace()}.{cls._get_name()}"
+    
     @classmethod
     def _get_description(cls):
         return  cls._try_config_attr('description',cls.__doc__)
@@ -121,17 +134,26 @@ class AbstractModel:
         return cls._try_config_attr('namespace', default=namespace)
     
     @classmethod
-    def _get_names(cls):
+    def _get_name(cls):
         s = cls.model_json_schema(by_alias=False)
-        name = s.get("title", cls.__name__)
+        name = s.get("title") or cls.__name__
         return cls._try_config_attr('name', default=name)
     
     @classmethod
     def _get_external_functions(cls):
         return cls._try_config_attr('functions', default={})
 
-    
-    
+    @classmethod
+    def to_meta_model(cls) -> "MetaModel":
+        """create the meta model for reading and writing to the database
+           An abstract model can be recovered from the meta model
+        """
+        return MetaModel(name=cls._get_name(), 
+                         namespace=cls._get_namespace(),
+                         description=cls._get_system_prompt_markdown(),
+                         functions=cls._try_config_attr('functions'),
+                         key_field=cls._try_config_attr('key'))
+ 
     @classmethod
     def _get_system_prompt_markdown(cls, 
                                    include_external_functions:bool=True, 
@@ -141,7 +163,13 @@ class AbstractModel:
         
         """
         
-        return ""
+        return f"""
+## Model details
+name: {cls._get_name()}
+
+## System prompt
+{cls._get_description()}
+    """
     
     @classmethod
     def get_public_class_and_instance_methods(cls):
@@ -156,6 +184,48 @@ class AbstractModel:
         """return everything but hide privates"""
         return [m for m in methods if not m.__name__[:1] == "_"]
     
+    @classmethod
+    def _get_embedding_fields(cls) -> typing.Dict[str, str]:
+        """returns the fields that have embeddings based on the attribute - uses our convention"""
+        needs_embeddings = {}
+        for k, v in cls.model_fields.items():
+            extras = getattr(v, "json_schema_extra", {}) or {}
+            if extras.get("embedding_provider"):
+                needs_embeddings[k] = f"{k}_embedding"
+        return needs_embeddings
+    
     
 class AbstractEntityModel(AbstractModel):
-    pass
+    id:  uuid.UUID  
+    description: str = Field(description="The summary or abstract of the resource", embedding_model="openai.text-embedding-ada-002")
+    
+    @classmethod
+    def _update_records(cls, records: typing.List["AbstractEntityModel"]):
+        """"""
+        from pyaida import pg
+        return pg.repository(cls).update_records(records)
+        
+    @classmethod
+    def _select(cls, fields: typing.Optional[typing.List] = None):
+        """"""
+        from pyaida import pg
+        return pg.repository(cls).select(fields=fields)
+        
+        
+class _MetaField(AbstractModel):
+    name: str
+    description: typing.Optional[str] = None
+    embedding_provider: typing.Optional[str] = None
+    default: typing.Optional[str] = None
+    
+class MetaModel(AbstractModel):
+    """
+    the meta model is a persisted version of a concrete model
+    this can be saved and reloaded from the database and is used for agents
+    """
+    name: str
+    namespace: str = Field('public', description="An optional namespace")
+    description: str = Field('', description="System prompt or other overview description")
+    functions: dict  = Field({}, description="A mapping of functions to use")
+    key_field: typing.Optional[str] = Field('id', description="The primary key field - convention is to simply use id")
+    fields: typing.Optional[_MetaField] = Field(description="The fields and their properties")

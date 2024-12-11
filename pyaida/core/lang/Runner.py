@@ -4,7 +4,7 @@ The runner can call the LLM in a loop and manage the stack of messages and funct
 
 from pyaida.core.data import AbstractModel
 from pyaida.core.lang.models import language_model_client_from_context, LanguageModel, CallingContext
-from pyaida.core.lang import FunctionManager
+from pyaida.core.lang.FunctionManager import FunctionManager
 from pyaida.core.utils import logger, now
 import json 
 import typing
@@ -39,7 +39,7 @@ class Runner:
         self.initialize()
         
     def __repr__(self):
-        return f"Runner({(self.model._get_model_name())})"
+        return f"Runner({(self.model._get_name())})"
 
     def initialize(self):
         """register the functions and other metadata from the model"""
@@ -58,46 +58,18 @@ class Runner:
         self._function_manager.add_function(self.save_entity)
         
     
-    def activate_functions_by_name(self, function_name_to_entity_mapping: dict=None, **kwargs):
+    def activate_functions_by_name(self, function_names: typing.List[str], **kwargs):
         """
-        If you encounter a full name of a function that you don't have details for, you can activate it here.
-        Once you activate it, it will be ready for use. Supply one or more function names to activate them.
-        The parameter takes a dictionary mapping of functions to their bound_entity_name. 
-        For example a function like schema.namespace.function_name has bound_entity_name=schema.namespace and name function_name so you pass a map function_name->bound_entity_name
-        If the verb syntax is used e.g. get:/some/endpoint you can pass this as get:/some/endpoint->domain (if known) or None for domain if not known.
-        Here is a valid valid for the single parameter `function_name_to_entity_mapping`
-        Example:
-        ```
-        { get:/some/endpoint: None, 'public.notes': 'run_search'}
-        ```
-        And you can apply this for any valid entity and function 
-
-        
-        Args:
-            function_name_to_entity_mapping (dict): provide a map between a function name and the entity (or domain) that the function belongs to.
+        provide a list of function names to load.
+        The names should be fully qualified object_id.function_name
         """
         
-        """NO-OP for now; the function manager can activate the functions - for now we are handling these cases when entities are loaded below.
-           So this is just a placeholder if we want to have a more generalized registry and the idea of lazy activation to reduce cognitive load 
-           - also, this function is a good way IF the agent thinks it has not got access to the function, give it something to do and then nudge it with the message below.
-        """
-        
-        if not function_name_to_entity_mapping:
-            if kwargs:
-                function_name_to_entity_mapping = kwargs
-            else:
-                print('NO PARAM PASSED', kwargs)
-                raise Exception("please provide a name of functions mapped to their entity or domain. If you dont know the mapping just provide function names e.g. { 'function_name': None }")
-        
-        fm = function_name_to_entity_mapping
-        if not isinstance(fm,dict):
-            raise Exception("When calling this function, in `function_names` you must provide a mapping between the function and the entity or domain it belongs e.g. {'some_function': 'namespace.entity'}")
-            
-        logger.debug(f'activating function {fm}')
-        fm = self._function_manager.add_functions_by_name(fm)
-            
+ 
+        logger.debug(f'activating function {function_names}')
+        fm = self._function_manager.add_functions_by_key(function_names)
+        """todo check status"""
         return {
-            'status': f"Re: the functions {list(fm.values())}, now ready for use. please go ahead and invoke."
+            'status': f"Re: the functions {function_names}, now ready for use. please go ahead and invoke."
         }
         
     def lookup_entity(self, name:str):
@@ -167,6 +139,9 @@ class Runner:
         Args:
             function_call (FunctionCall): the payload send from an LLM to call a function
         """
+        
+        logger.debug(f"{function_call=}")
+        
         f = self._function_manager[function_call.name]
         
         if not f:
@@ -211,13 +186,12 @@ class Runner:
         """setup all the bits before running the loop"""
         lm_client: LanguageModel = language_model_client_from_context(context)
         self._context = context
+        
         self.messages = MessageStack(
             model=self.model,
-            question=question,
-            current_date= now(),
             function_names=self.functions.keys(),
-            language_model_provider=lm_client.get_provider(),
-        )
+            language_model_provider=lm_client.get_provider())\
+                .add_question(question)
              
         """run the agent loop to completion"""
         for _ in range(limit or context.max_iterations):

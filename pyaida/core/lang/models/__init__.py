@@ -1,14 +1,16 @@
 """add some language model abstractions"""
 
 
+GPT_MINI = "gpt-4o-mini"
+DEFAULT_MODEL =   "gpt-4o-2024-08-06"
+
+
 import typing
 from enum import Enum
 from pyaida.core.lang.messages import MessageStack
 from abc import ABC, abstractmethod
 from .CallingContext import CallingContext
-
-GPT_MINI = "gpt-4o-mini"
-DEFAULT_MODEL =   "gpt-4o-2024-08-06"
+from pyaida.core.lang.functions import Function
 
 class LanguageModelProvider(Enum):
 
@@ -74,10 +76,8 @@ class LanguageModelBase:
         context = context or CallingContext()
         if isinstance(messages, str):
             """simple convenience cheat"""
-            messages = MessageStack(question=messages, model=None)
-        # if isinstance(messages, MessageStack):
-        #     messages = messages.model_dump()
-
+            messages = MessageStack(model=None).add_question(messages)
+ 
         self._messages = messages
         self._functions = functions
 

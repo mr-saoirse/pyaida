@@ -23,7 +23,17 @@ class TypeInfo(BaseModel):
 
     def to_json_schema(cls) -> dict:
         return {}
-
+    
+def object_name(obj: typing.Any):
+    """
+    get a unique string name for an object type
+    """
+    if hasattr(obj, '__object_id__'):
+        return obj.__get_object_id__()
+    if not isinstance(obj, type):
+        obj = type(obj)
+    return f"{obj.__module__}.{obj.__name__}"
+    
 
 def get_defining_class(member,cls):
     defining_class = getattr(member, '__objclass__', None)
@@ -135,7 +145,7 @@ def resolve_named_type(name: str, t: type, **kwargs):
 
 def get_classes(
     base_filter: type = None,
-    package="funkyprompt.core",
+    package="pyaida.core",
     exclusions: typing.List[str] = None,
 ) -> list[type]:
     """recurse and get classes implementing a base class
@@ -174,3 +184,15 @@ def get_classes(
         if not base_filter
         else [c for c in classes_in_package if issubclass(c, base_filter)]
     )
+
+def load_model(object_id, case_sensitive:bool=True):
+    """
+    loads the model by id
+    """
+    from pyaida import AbstractModel
+    models: typing.List[AbstractModel] = get_classes(AbstractModel)
+    models = [m for m in models if m.__get_object_id__() == object_id] if case_sensitive \
+     else [m for m in models if str(m.__get_object_id__()).lower() == object_id.lower()]
+    if not models:
+        raise Exception(f"Could not load {object_id} from models")
+    return models[0]

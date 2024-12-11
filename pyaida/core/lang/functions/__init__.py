@@ -1,1 +1,1 @@
-from . Function import FunctionCall, Function
+from . Function import FunctionCall, Function, FunctionModel
