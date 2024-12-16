@@ -1,4 +1,4 @@
-from pyaida import AbstractEntityModel
+from pyaida import AbstractEntityModel, AbstractModel
 from uuid import UUID
 import typing
 from typing import get_type_hints
@@ -7,6 +7,7 @@ from enum import Enum
 import uuid
 import types
 import json
+from pyaida.core.utils import inspection
 
 EMBEDDING_LENGTH_OPEN_AI = 1536
 
@@ -74,8 +75,14 @@ class SqlHelper:
         cls.table_name = cls.model.__get_object_id__() 
         cls.field_names = SqlHelper.select_fields(model)
         cls.id_field = cls.model._try_config_attr('key', default='id')
-        cls.embedding_fields = list(cls.model._get_embedding_fields().values())
+        cls.embedding_fields = list(map(lambda x: x.column_name, cls.model._get_embedding_fields()))
         cls.metadata = {}
+        
+    @property
+    def embedding_table_name(self):
+        """apply convention and get the associated embedding table"""
+        table_name = self.table_name.replace('.','_')
+        return f"embeddings.{table_name}"
 
     @classmethod
     def select_fields(cls, model):
@@ -135,6 +142,7 @@ class SqlHelper:
         def check_complex(v):
             if isinstance(v, uuid.UUID):
                 v = str(v)
+            """cannot adapt dict so it seems we need to do this"""
             if isinstance(v, dict):# or isinstance(v, list):
                 return json.dumps(v)
             return v
@@ -158,20 +166,26 @@ class SqlHelper:
             but its assumed that the database supports those embeddings by convention
         """
         
-        """im not sure what i need to do this yet"""
+        """dump nested objects - why do i need to do this"""
         d = {}
-        import json
+         
         for k,v in data.items():
             if hasattr(v,'model_dump'):
               v = v.model_dump()
-            if isinstance(v,list):
-                v = [json.dumps( vi.model_dump() ) if hasattr(vi,'model_dump') else vi for vi in v  ]
+            elif isinstance(v,list):
+                """the entire json needs to be dumped because postgres client may not be able to adapt to json fields"""
+                v = json.dumps([ vi.model_dump()   if hasattr(vi,'model_dump') else vi for vi in v  ])
             d[k] = v  
 
         return d
 
     @classmethod
     def pydantic_to_postgres_type(cls, t):
+        
+        t = inspection.get_innermost_args(t)
+        if inspection.match_type(t,AbstractModel):
+            return "JSON"
+        
         """fill me in"""
         type_mapping = {
             str: "VARCHAR",
@@ -187,13 +201,7 @@ class SqlHelper:
 
         return type_mapping.get(t, "TEXT")
 
-    @classmethod
-    def _create_embedding_table_script(cls, entity_model, existing_columns=None):
-        """for a separate embedding table
-        if we have the connection we can check for a diff and create an alter statement, otherwise we must to the update
-        we do not remove columns, but we can add
-        """
-        pass
+ 
 
     @classmethod
     def _create_view_script(cls, entity_model):
@@ -201,6 +209,29 @@ class SqlHelper:
         create or alter the view to select all columns from the join possibly with system columns
         """
         pass
+    
+    def embedding_table_creation_script(cls):
+        """
+        Given a model, we create the corresponding embeddings table
+        """
+    
+        
+        Q = f"""CREATE TABLE {cls.embedding_table_name} (
+            id UUID PRIMARY KEY,  -- Hash-based unique ID
+            source_table_id UUID NOT NULL,  -- Foreign key to another table
+            column_name TEXT NOT NULL,  -- Column name for embedded content
+            embedding_vector VECTOR NULL,  -- Embedding vector as an array of floats
+            embedding_id UUID,  -- ID for embedding provider
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp for tracking
+            
+            -- Foreign key constraint
+            CONSTRAINT fk_source_table
+                FOREIGN KEY (source_table_id) REFERENCES {cls.table_name}
+                ON DELETE CASCADE
+        );
+
+        """
+        return Q
 
     def create_script(cls, embeddings_inline: bool = False, connection=None, allow_create_schema:bool = False, if_exists: str = 'raise'):
         """

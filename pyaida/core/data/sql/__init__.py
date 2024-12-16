@@ -1,1 +1,1 @@
-from .helper import SqlHelper
+from .helper import SqlHelper, VectorSearchOperator

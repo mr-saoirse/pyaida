@@ -24,6 +24,46 @@ class TypeInfo(BaseModel):
     def to_json_schema(cls) -> dict:
         return {}
     
+def get_innermost_args(type_hint):
+    """
+    Recursively extracts the innermost type arguments from nested Optionals, Lists, and Unions.
+    """
+
+    if typing.get_origin(type_hint) is typing.Union:
+        for arg in typing.get_args(type_hint):
+            if arg is not type(None):  
+                return get_innermost_args(arg)
+
+    if typing.get_origin(type_hint) is list or type_hint == typing.List:
+        list_args = typing.get_args(type_hint)
+        if list_args:
+            return get_innermost_args(list_args[0])
+
+    return type_hint
+
+def match_type(inner_type, base_type) -> bool:
+    """
+    Recursively check if any of the inner types match the base type.
+    """
+    arg = get_innermost_args(inner_type)
+    if issubclass(arg, base_type):
+        return arg
+    
+def get_ref_types(cls, model_root = None):
+    """gt all the Abstract Models referenced in the type including self"""
+    from pyaida.core.data import AbstractModel
+    types =[]
+    model_root  = model_root or AbstractModel
+    def _get_ref_types(cls, types:typing.List[typing.Type]):
+        types.append(cls)
+        for _, v in cls.model_fields.items():
+            t = get_innermost_args(v.annotation)
+            if match_type(t,model_root) and v not in types:
+                _get_ref_types(t, types)
+        return types
+    return _get_ref_types(cls, types)
+            
+            
 def object_name(obj: typing.Any):
     """
     get a unique string name for an object type

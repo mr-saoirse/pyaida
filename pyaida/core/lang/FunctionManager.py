@@ -7,6 +7,7 @@ from pyaida.core.lang.messages import MessageStack
 from pyaida.core.lang.models import CallingContext, language_model_client_from_context, LanguageModel
 from functools import partial
 from pyaida.core.lang.PlanModel import Plan
+from pyaida.core.utils import logger
  
 class FunctionLoadException(Exception):
     pass
@@ -20,11 +21,14 @@ class ApiProxy:
         from pyaida.core.parsing.openapi import OpenApiSpec
         self.uri = uri
         self.token_key = token_key
-        
+        self.endpoints = None
         if not self.uri:
             self.uri = os.environ.get('PYAIDA_API_URI', 'http://127.0.0.1:8002')
-        self.openapi = OpenApiSpec(f"{self.uri}/{spec_file}")
-        self.endpoints = self.openapi._endpoint_methods
+        try:
+            self.openapi = OpenApiSpec(f"{self.uri}/{spec_file}")
+            self.endpoints = self.openapi._endpoint_methods
+        except Exception as ex:
+            logger.warning(f"Failed to load the default API proxy json - may have trouble calling some default endpoint")
         
     def invoke_function(self, spec_or_id:str|dict, data=None,  **kwargs):
         """
@@ -37,15 +41,16 @@ class ApiProxy:
         return self._invoke(op_id=spec_or_id, data=data, **kwargs)
             
     def __getattr__(self, name):
-        """allow using a method name on the proxy"""
-        if name in self.endpoints:
-            """return something callable and a spec"""
-            s = self.openapi.get_operation_spec(name)
-            """in the same format -> internally fix but create a validator"""
-            return Function(spec=s,fn= partial(self._invoke, op_id=name))
-
-        return super().__getattr__(name)
-    
+        
+        """Custom attribute access logic."""
+     
+        try:
+            return super().__getattribute__(name)
+        except AttributeError:
+            if name in self.endpoints:
+                spec = self.openapi.get_operation_spec(name)
+                return Function(spec=spec, fn=partial(self._invoke, op_id=name))
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
         
     def _invoke(self, *args, op_id:str|dict, data=None, return_raw_response:bool=False, full_detail_on_error: bool = False, **kwargs):
         """call the endpoint assuming json output for now"""

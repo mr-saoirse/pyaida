@@ -1,5 +1,6 @@
 """
 The runner can call the LLM in a loop and manage the stack of messages and functions
+Research: we should understand the entropy at each stage and the overall resolution graph in the decision tree
 """
 
 from pyaida.core.data import AbstractModel
@@ -33,9 +34,11 @@ class Runner:
         If the model has no functions simple Q&A can still be exchanged with LLMs.
         More generally the model can provide a structured response format.
         """
+        from pyaida import pg
         self.model: AbstractModel = model or None # DefaultAgentCore()
         self._function_manager = FunctionManager()
         self._allow_help = allow_help
+        self.repo = pg.repository(self.model)
         self.initialize()
         
     def __repr__(self):
@@ -51,12 +54,21 @@ class Runner:
         self._function_manager.register(self.model)
         """the basic bootstrapping means asking for help, entities(types) or functions"""
         self._function_manager.add_function(self.lookup_entity)
+        self._function_manager.add_function(self.run_search)
         self._function_manager.add_function(self.activate_functions_by_name)
         """more complex things will happen from here when we traverse what comes back"""
         
         """whether we should put this crud here remains to be seen - it could be a property of the model instead"""
-        self._function_manager.add_function(self.save_entity)
-        
+        #self._function_manager.add_function(self.save_entity)
+    
+    def run_search(self, questions: typing.List[str]):
+        """run a search on the model that is being used in the current context as per the system prompt
+        If you want to add multiple questions supply a list of strings as an array.
+        Args:
+            questions: ask one or more questions to search the data store
+        """    
+ 
+        return self.repo.run_search(questions)
     
     def activate_functions_by_name(self, function_names: typing.List[str], **kwargs):
         """
@@ -83,7 +95,7 @@ class Runner:
         logger.debug(f"lookup entity/{name=}")
        
         """todo test different parameter inputs e.g. comma separated"""
-        entities =  pg.repository(self.model).get_nodes_by_name(name,default_model=self.model)
+        entities =  self.repo(self.model).get_nodes_by_name(name,default_model=self.model)
         
         """register entity functions if needed and wait for the agent to ask to activate them"""
         for e in entities:
@@ -92,23 +104,23 @@ class Runner:
         """when we return the entities, its better to return them with metadata (as opposed to just fetching the record data only)"""
         return AbstractModel.describe_models(entities)
     
-    def save_entity(self, entity:dict=None, structure_name: str=None, **kwargs):
-        """Save entities that match the response schema given
+    # def save_entity(self, entity:dict=None, structure_name: str=None, **kwargs):
+    #     """Save entities that match the response schema given
         
-        Args:
-            entity: dictionary values matching the entity structure
-            structure_name: if multiple known structures, provide the name
-        """
+    #     Args:
+    #         entity: dictionary values matching the entity structure
+    #         structure_name: if multiple known structures, provide the name
+    #     """
         
-        if not entity:
-            """invariance to calling styles"""
-            entity = kwargs
+    #     if not entity:
+    #         """invariance to calling styles"""
+    #         entity = kwargs
             
-        try:
-            _ =   pg.repository(self.model).update_records(self.model(**entity))
-            return {'status': 'entity save'}
-        except Exception as ex: 
-            return {'status': 'error', 'detail': repr(ex)}
+    #     try:
+    #         _ =   self.repo.update_records(self.model(**entity))
+    #         return {'status': 'entity save'}
+    #     except Exception as ex: 
+    #         return {'status': 'error', 'detail': repr(ex)}
 
     def help(self, questions: str | typing.List[str], context: str = None ):
         """if you are stuck ask for help with very detailed questions to help the planner find resources for you.
@@ -180,10 +192,11 @@ class Runner:
         """provide access to the function manager's functions"""
         return self._function_manager.functions
 
-    def run(self, question: str, context: CallingContext, limit: int = None):
+    def run(self, question: str, context: CallingContext=None, limit: int = None):
         """Ask a question to kick of the agent loop"""
 
         """setup all the bits before running the loop"""
+        context = context or CallingContext()
         lm_client: LanguageModel = language_model_client_from_context(context)
         self._context = context
         
